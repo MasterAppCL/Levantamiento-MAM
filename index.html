@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Levantamiento MAM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#F3F4F2; --surface:#FFFFFF; --ink:#1E2328; --muted:#5E666E; --line:#D3D7DB;
+  --steel:#C4CAD0; --tag:#FFD60A; --tag-ink:#1E2328; --strip:#D9231B; --ok:#1F7A4D; --warn:#A55A00;
+  --shelf:#E9ECEE;
+  color-scheme: light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#15181B; --surface:#1E2226; --ink:#EEF0F2; --muted:#9AA3AB; --line:#343A40;
+    --steel:#4A525A; --tag:#FFD60A; --tag-ink:#1E2328; --strip:#FF4A3D; --ok:#5BC48C; --warn:#F2A541;
+    --shelf:#2A2F34; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#15181B; --surface:#1E2226; --ink:#EEF0F2; --muted:#9AA3AB; --line:#343A40;
+  --steel:#4A525A; --tag:#FFD60A; --tag-ink:#1E2328; --strip:#FF4A3D; --ok:#5BC48C; --warn:#F2A541;
+  --shelf:#2A2F34; color-scheme: dark;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Archivo",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:16px;line-height:1.45}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--ink)}
+button,input,select{font:inherit;color:inherit}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--ink);color:var(--bg);padding:14px 16px 0}
+.brand{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.brand h1{margin:0;font-size:1.35rem;font-stretch:75%;font-weight:800;letter-spacing:.01em}
+.localsel{background:transparent;color:inherit;border:1px solid rgba(255,255,255,.35);border-radius:6px;padding:5px 8px;font-size:.9rem;max-width:62vw}
+.localsel option{color:#1E2328;background:#fff}
+.lrow{display:flex;gap:10px;align-items:center;border-top:1px solid var(--line);padding:10px 0}
+.lrow:first-child{border-top:0}
+.lrow .sap{font-stretch:75%;font-weight:800;background:var(--tag);color:var(--tag-ink);border-radius:5px;padding:2px 8px}
+.lrow.cur{font-weight:700}
+nav.tabs{display:flex;gap:4px;margin-top:10px}
+nav.tabs button{flex:1;background:transparent;border:0;border-bottom:3px solid transparent;padding:10px 4px;color:inherit;opacity:.7;cursor:pointer;font-weight:600}
+nav.tabs button[aria-selected="true"]{opacity:1;border-bottom-color:var(--tag)}
+main{max-width:860px;margin:0 auto;padding:16px}
+section.view[hidden]{display:none}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+.panel h2{margin:0 0 10px;font-size:1.05rem;font-stretch:85%;font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:.82rem;color:var(--muted)}
+label.f input,label.f select{font-size:1rem;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:9px 10px;min-width:0;width:100%}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:10px 14px;font-weight:600;cursor:pointer;min-height:44px}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn.tag{background:var(--tag);color:var(--tag-ink);border-color:var(--tag)}
+.btn.small{min-height:34px;padding:6px 10px;font-size:.88rem}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.danger{color:var(--strip)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.muted{color:var(--muted);font-size:.9rem}
+:focus-visible{outline:3px solid var(--tag);outline-offset:2px}
+.hidden-input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+
+/* queue */
+.qitem{display:grid;grid-template-columns:92px 1fr;gap:12px;border-top:1px solid var(--line);padding:14px 0}
+.qitem:first-child{border-top:0}
+.qitem img{width:92px;height:122px;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:var(--shelf)}
+.status{font-size:.85rem;font-weight:600}
+.status.wait{color:var(--muted)} .status.run{color:var(--warn)} .status.ok{color:var(--ok)} .status.err{color:var(--strip)}
+
+/* the gondola diagram */
+.review{display:grid;grid-template-columns:minmax(150px,210px) 1fr;gap:14px;margin-top:10px}
+@media (max-width:560px){.review{grid-template-columns:1fr}}
+.gondola{background:var(--shelf);border:6px solid var(--steel);border-top-width:10px;border-radius:4px;padding:6px 6px 0;display:flex;flex-direction:column-reverse;gap:0;min-height:200px}
+.level{position:relative;flex:1;min-height:30px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 4px 3px;border-bottom:4px solid var(--steel);box-shadow:inset 0 -3px 0 var(--strip)}
+.level .n{font-size:.7rem;color:var(--muted);font-weight:700}
+.level select{font-size:.72rem;font-weight:700;background:var(--tag);color:var(--tag-ink);border:0;border-radius:3px;padding:2px 4px;max-width:120px}
+.level.zero select{background:transparent;color:var(--muted);border:1px dashed var(--muted)}
+.gon-actions{display:flex;gap:6px;margin-top:6px}
+.notes{font-size:.88rem;background:var(--bg);border-left:3px solid var(--tag);padding:8px 10px;border-radius:0 6px 6px 0;margin-top:8px}
+
+/* list */
+.group h3{margin:18px 0 6px;font-size:1rem;font-stretch:85%}
+.mrow{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:6px}
+.pos{font-stretch:75%;font-weight:800;font-size:1.4rem;text-align:center;background:var(--tag);color:var(--tag-ink);border-radius:6px;padding:4px 0}
+.mrow .t{font-weight:700}
+.mrow .s{font-size:.85rem;color:var(--muted)}
+.mrow .acts{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.empty{text-align:center;padding:30px 10px;color:var(--muted)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;z-index:20;font-weight:600;max-width:90vw}
+.toast[hidden]{display:none}
+.sync{font-size:.78rem;opacity:.7;margin-left:auto}
+footer.credits{max-width:860px;margin:8px auto 0;padding:18px 16px calc(28px + env(safe-area-inset-bottom,0px));border-top:4px solid var(--tag);color:var(--muted);font-size:.85rem;display:flex;flex-wrap:wrap;gap:6px 18px;justify-content:space-between}
+footer.credits strong{color:var(--ink);font-stretch:85%;font-size:1rem}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);width:min(560px,94vw);padding:16px}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>Levantamiento MAM</h1>
+    <select id="localSel" class="localsel" aria-label="Local"></select>
+    <span class="sync" id="sync">Guardado en este equipo</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="capturar">Capturar</button>
+    <button role="tab" aria-selected="false" data-tab="modulos">Módulos <span id="count">(0)</span></button>
+    <button role="tab" aria-selected="false" data-tab="ajustes">Local</button>
+  </nav>
+</header>
+
+<main>
+<!-- CAPTURAR -->
+<section class="view" id="v-capturar">
+  <div class="panel">
+    <h2>¿Dónde estás?</h2>
+    <div class="grid">
+      <label class="f">Tipo de ubicación
+        <select id="u-tipo">
+          <option>PASILLO</option><option>PASILLO CAJAS</option><option>PASILLO LATERAL</option>
+          <option>PASILLO PERECIBLE</option><option>PASILLO PERIMETRAL</option><option>CABECERA</option>
+        </select>
+      </label>
+      <label class="f">ID pasillo<input id="u-id" value="1" inputmode="text"></label>
+      <label class="f">Lado
+        <select id="u-lado"><option>A</option><option>B</option></select>
+      </label>
+      <label class="f">Próxima posición<input id="u-pos" type="number" min="1" value="1"></label>
+    </div>
+    <div class="grid" style="margin-top:10px">
+      <label class="f">Ancho módulo (cm)<input id="u-ancho" type="number" value="130"></label>
+      <label class="f">Profundidad (cm)<input id="u-prof" type="number" value="40"></label>
+    </div>
+    <p class="muted" style="margin:10px 0 0">Si subes varias fotos seguidas, súbelas en el orden en que recorres el pasillo: cada foto toma la siguiente posición.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Fotos de módulos</h2>
+    <div class="row">
+      <label class="btn tag" for="camInput">Tomar foto</label>
+      <input class="hidden-input" id="camInput" type="file" accept="image/*" capture="environment">
+      <label class="btn" for="fileInput">Subir fotos</label>
+      <input class="hidden-input" id="fileInput" type="file" accept="image/*" multiple>
+      <button class="btn primary" id="analyzeAll" disabled>Analizar con IA</button>
+    </div>
+    <p class="muted" id="aiState" style="margin:10px 0 0">Conectando con Claude…</p>
+    <div id="queue"></div>
+  </div>
+</section>
+
+<!-- MODULOS -->
+<section class="view" id="v-modulos" hidden>
+  <div class="panel">
+    <div class="row">
+      <button class="btn primary" id="exportBtn">Descargar Excel</button>
+      <button class="btn" id="addManual">Agregar módulo sin foto</button>
+    </div>
+    <p class="muted" style="margin:10px 0 0">El Excel sale con las mismas columnas de la planilla MAM 2.0 (SAP a NIVEL 7), en una pestaña llamada MAM con el SAP del local.</p>
+  </div>
+  <div id="list"></div>
+</section>
+
+<!-- AJUSTES -->
+<section class="view" id="v-ajustes" hidden>
+  <div class="panel">
+    <h2>Elegir local</h2>
+    <div id="localList"></div>
+  </div>
+  <div class="panel">
+    <h2>Agregar local</h2>
+    <div class="grid">
+      <label class="f">SAP<input id="n-sap" placeholder="N537"></label>
+      <label class="f">Nombre del local<input id="n-local" placeholder="SISA LOS CARRERA QUILPUE"></label>
+      <label class="f">MTS2<input id="n-mts" type="number"></label>
+    </div>
+    <button class="btn primary" id="addLocal" style="margin-top:10px">Agregar y elegir</button>
+  </div>
+  <div class="panel">
+    <h2>Datos del local elegido</h2>
+    <div class="grid">
+      <label class="f">SAP<input id="c-sap"></label>
+      <label class="f">Local<input id="c-local"></label>
+      <label class="f">MTS2<input id="c-mts" type="number"></label>
+    </div>
+    <p class="muted" style="margin:10px 0 0">Estos datos se repiten en todas las filas del Excel. Cada local tiene su propio levantamiento.</p>
+  </div>
+  <div class="panel" id="apiPanel">
+    <h2>Análisis con IA</h2>
+    <p class="muted" style="margin-top:0">Para analizar fotos necesitas una clave API de Anthropic (console.anthropic.com). Se guarda solo en este navegador y cada análisis se cobra en esa cuenta.</p>
+    <div class="grid">
+      <label class="f">Clave API<input id="apiKey" type="password" autocomplete="off" placeholder="sk-ant-..."></label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="saveKey">Guardar clave</button><button class="btn danger" id="delKey">Borrar clave</button></div>
+  </div>
+  <div class="panel">
+    <h2>Borrar levantamiento</h2>
+    <p class="muted">Elimina todos los módulos guardados del local elegido. No se puede deshacer.</p>
+    <div class="row"><button class="btn danger" id="wipe">Borrar todos los módulos</button>
+    <button class="btn danger" id="delLocal">Quitar este local de la lista</button></div>
+  </div>
+</section>
+</main>
+
+<footer class="credits">
+  <div>Desarrollado por <strong>Patricio Navarro Reyes</strong></div>
+  <div>Análisis de fotos con IA: Claude de Anthropic<br>Formato basado en la planilla MAM 2.0 · © 2026</div>
+</footer>
+
+<dialog id="editDlg">
+  <form method="dialog" id="editForm"></form>
+</dialog>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+/* ---------- catálogo (de la planilla MAM 2.0) ---------- */
+const CATALOGO = {
+ "ALMACEN":{"g":"CONSUMO MASIVO","c":["ACEITES","ARROZ","AZUCAR","CAFE","CEREALES","COMIDA ETNICA","CONDIMENTOS","CONSERVAS FF/VV","CONSERVAS MAR/OTROS","DERIVADOS LECHE","EDULCORANTES","FIDEOS","HARINAS Y FECULAS","IMPORTADOS","LECHES EN POLVO","LEGUMBRES","LINEA ROJA","MERMELADAS-MIEL","MUNDO DESAYUNO","NUTRICION INFANTIL","PLATOS PREP INSTAN","POSTRES","PURE INSTANTANEO","REPOSTERIA","SABORIZANTES LECHE","SAL","SOPAS-CALDOS","TE-HIERBAS-MATE","VINAGRES"]},
+ "AUTOMOTOR":{"g":"NON FOOD","c":["AUTOMOTOR"]},
+ "BOTILLERIA/GASEOSAS":{"g":"CONSUMO MASIVO","c":["AGUAS","BEBIDAS GASEOSAS","LICORES SIN ALCOHOL","NECTAR Y JUGOS LIQ","OTRAS BEBIDAS","REFRESCOS POLVO"]},
+ "COCKTAIL":{"g":"CONSUMO MASIVO","c":["COMIDA ETNICA","CONDIMENTOS","ENCURTIDOS","FRUTOS SECOS","SALSAS Y ADEREZOS","SNACKS"]},
+ "CONGELADOS":{"g":"PERECIBLES","c":["COMIDAS PREP CONG","FRUTAS CONG","HAMBURG/PROT CONG","HELADOS","PESCADERIA CONG.","VERDURAS CONG"]},
+ "FIAMBRERIA":{"g":"PERECIBLES","c":["FIAMBRERIA ASIST","FIAMBRERIA ENV","VIENESA/PARRILLERO"]},
+ "GALLETAS Y GOLOSINAS":{"g":"CONSUMO MASIVO","c":["BIZCOCHOS","CHOCOLATES","GALLETAS DESAYUNO","GALLETAS DULCES","GALLETAS SALADAS","GOLOSINAS","MUNDO DESAYUNO"]},
+ "LACTEOS":{"g":"PERECIBLES","c":["BEBIDAS VEGETALES","CREMAS DE LECHE","DERIVADOS DE LECHE","HIELO","HUEVOS","JUGOS FRESCOS","LECHES UHT","MANJAR","MANTEQUILLA","MARGARINA","MUNDO BIO","QUESERIA ENV","YOGHURT Y POSTRES"]},
+ "LICORES":{"g":"CONSUMO MASIVO","c":["COCTELES","GIN","LICORES SIN ALCOHOL","OTROS LICORES","PISCOS","RON","VODKA","WHISKY"]},
+ "LIMPIEZA":{"g":"CONSUMO MASIVO","c":["AMBIENTALES HOGAR","ASEO COCINA","ASEO MANUAL","BOLSAS PARA BASURA","CERAS-VIRUTILLAS","COMPLEMENTO LAVADO","DETERGENTES ROPA","HIPOCLORITOS","INSECTICIDAS HOGAR","LAVAVAJILLA","LIMPIADORES HOGAR","LIMPIEZA CALZADO","PAPEL HIGIENICO","PINZA-FOSFORO-VELA","SERVILLETAS PAPEL","SUAVIZANTES ROPA","TOALLA PAPEL"]},
+ "MASCOTAS":{"g":"NON FOOD","c":["ACC MASCOTAS","ALIM GATOS","ALIM PERROS","ARENAS","HUESOS Y CARTILAGOS"]},
+ "PANIFICADOS":{"g":"PERECIBLES","c":["PANADERIA ENV.","PASTELERIA ENV.","TORTILLA / PREPIZZA"]},
+ "PASTELERIA":{"g":"PERECIBLES","c":["PASTELERIA ENV.","PASTELERIA PROPIA","TORTAS CONG"]},
+ "PERFUMERIA":{"g":"CONSUMO MASIVO","c":["ACC BEBE PERF","ACCESORIOS BAÑO","ACCESORIOS CABELLO","COLORACION/STYLING","CUIDADO INTEGRAL","CUIDADO MASCULINO","DEPILACION","DESODORANTES","FRAGANCIAS","HIGIENE BUCAL","HIGIENE CAPILAR","HIGIENE INTIMA FEM","JABON","MANICURE/PEDICURE","MAQUILLAJE","PAÑALES ADULTO","PAÑALES BEBÉ","PERF INFANTIL","PRODUCTOS DE PAPEL","PROTECCIÓN SOLAR","SALUD-PRIM AUX","TOALLAS HUMEDAS"]},
+ "PESCADERIA":{"g":"PERECIBLES","c":["PESCADERIA CONG.","PESCADERIA FRESCA"]},
+ "QUESERÍA":{"g":"PERECIBLES","c":["QUESERIA ASIST","QUESERIA ENV","QUESO RALLADO"]},
+ "VINOS":{"g":"CONSUMO MASIVO","c":["ESPUMANTES","VINOS","SIN ALCOHOL"]},
+ "-":{"g":"-","c":["IMPORTADOS","MUNDO BIO"]}
+};
+const LAYOUT_ESPECIAL = {"MUNDO DESAYUNO":"GALLETAS MINI Y ARROZ"};
+const MOBILIARIO = ["GONDOLA SECA","CABECERA","GONDOLA REFRIGERADA","MURAL REFRIGERADO","PUERTA REFRIGERADA 1P","PUERTA REFRIGERADA 2P","PUERTA CONGELADA 1P","PUERTA CONGELADA 2P","ISLA","MESA","MESA AUTONOMA","MUEBLE AJUSTE","NAVE","PALLET","SEMI MURAL","FORWAY"];
+const NIVELES = ["BANDEJA","GANCHERA","PALLET","PISCINA","PISCINA 90","GRANEL","COOLER","0"];
+const HEADERS = ["SAP","LOCAL","MTS2","GERENCIA COMERCIAL","SECCION","CATEGORIA","CATEGORIA LAYOUT","TIPO DE MOBILIARIO","ALTO MODULO","ANCHO MODULO","PROFUNDIDAD MODULO","TIPO DE UBICACION","ID DE UBICACION","LADO","POSICION (módulo)","NIVEL 1","NIVEL 2","NIVEL 3","NIVEL 4","NIVEL 5","NIVEL 6","NIVEL 7"];
+
+/* ---------- estado ---------- */
+function newLocal(sap,local,mts2){return{config:{sap,local,mts2:mts2??""},ubic:{tipo:"PASILLO",id:"1",lado:"A",pos:1,ancho:130,prof:40},modulos:[]}}
+let store={actual:"N537",locales:{
+  "N537":newLocal("N537","SISA LOS CARRERA QUILPUE"),
+  "N693":newLocal("N693","SISA MALL QUILPUE")
+}};
+let state=store.locales[store.actual];
+function adopt(v){
+  if(!v)return;
+  if(v.locales){store={actual:v.actual||Object.keys(v.locales)[0],locales:{...store.locales,...v.locales}}}
+  else if(Array.isArray(v.modulos)){const sap=v.config?.sap||"N537";store.locales[sap]={...newLocal(sap,""),...v};store.actual=sap}
+  if(!store.locales[store.actual])store.actual=Object.keys(store.locales)[0];
+  state=store.locales[store.actual];
+}
+const queue = []; // {key,file,url,status,result,error,pos}
+let db=null, docRef=null, sample=null, downloads=null, saveTimer=null, canImages=false;
+const $ = s => document.querySelector(s);
+const uid = () => Math.random().toString(36).slice(2,10);
+
+function toast(msg){const t=$("#toast");t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>t.hidden=true,2600)}
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
+/* ---------- persistencia ---------- */
+function loadLocal(){try{const s=localStorage.getItem("mam-levantamiento");if(s)adopt(JSON.parse(s))}catch(e){}}
+function persist(){
+  try{localStorage.setItem("mam-levantamiento",JSON.stringify(store))}catch(e){}
+  if(!docRef)return;
+  clearTimeout(saveTimer);
+  $("#sync").textContent="Guardando…";
+  saveTimer=setTimeout(async()=>{
+    try{await docRef.set(JSON.parse(JSON.stringify(store)));$("#sync").textContent="Guardado en tu cuenta"}
+    catch(e){$("#sync").textContent="Guardado solo en este equipo"}
+  },700);
+}
+async function initRuntime(){
+  if(!window.claude){setupApiMode();return}
+  $("#apiPanel").hidden=true;
+  claude.use("sample").then(async s=>{
+    sample=s;
+    if(!s){$("#aiState").textContent="El análisis con IA no está disponible en esta vista. Puedes cargar módulos a mano.";return}
+    const lim=await s.limits().catch(()=>null);
+    canImages=!!lim?.images;
+    $("#aiState").textContent=canImages?"Listo. Sube fotos y presiona Analizar con IA.":"Esta vista no permite enviar fotos a Claude.";
+    refreshQueueButtons();
+  });
+  claude.use("downloads").then(d=>downloads=d);
+  const [d,u]=await Promise.all([claude.use("db"),claude.use("user")]);
+  if(!d||!u)return;
+  const id=await u.id(); if(!id)return;
+  db=d; docRef=db.doc("data/users/"+id+"/mam");
+  try{
+    const snap=await docRef.get();
+    if(snap.exists){adopt(snap.data());renderAll()}
+    else persist();
+    $("#sync").textContent="Guardado en tu cuenta";
+  }catch(e){$("#sync").textContent="Guardado solo en este equipo"}
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+function showTab(t){
+  document.querySelectorAll("nav.tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===t));
+  document.querySelectorAll("section.view").forEach(v=>v.hidden=v.id!=="v-"+t);
+  if(t==="modulos")renderList();
+}
+
+/* ---------- ubicación / config ---------- */
+function bindUbic(){
+  const m={"#u-tipo":"tipo","#u-id":"id","#u-lado":"lado","#u-pos":"pos","#u-ancho":"ancho","#u-prof":"prof"};
+  for(const [sel,k] of Object.entries(m)){
+    const el=$(sel); el.value=state.ubic[k];
+    el.onchange=()=>{let v=el.value; if(["pos","ancho","prof"].includes(k))v=Number(v)||0; if(k==="id")v=v.trim().toUpperCase(); state.ubic[k]=v; persist(); renumberQueue();};
+  }
+  const c={"#c-sap":"sap","#c-local":"local","#c-mts":"mts2"};
+  for(const [sel,k] of Object.entries(c)){
+    const el=$(sel); el.value=state.config[k]??"";
+    el.onchange=()=>{
+      const v=k==="mts2"?el.value.trim():el.value.trim().toUpperCase();
+      if(k==="sap"){if(!v||(v!==store.actual&&store.locales[v])){toast("Ese SAP ya existe o está vacío");el.value=state.config.sap;return}
+        delete store.locales[store.actual];store.locales[v]=state;store.actual=v}
+      state.config[k]=v; persist(); renderLocales()};
+  }
+  renderLocales();
+}
+function renderLocales(){
+  const sel=$("#localSel"); const keys=Object.keys(store.locales).sort();
+  sel.innerHTML=keys.map(k=>`<option value="${esc(k)}" ${k===store.actual?"selected":""}>${esc(k)} ${esc(store.locales[k].config.local)}</option>`).join("")+`<option value="__new">Agregar local…</option>`;
+  $("#localList").innerHTML=keys.map(k=>{const L=store.locales[k];return`<div class="lrow ${k===store.actual?"cur":""}"><span class="sap">${esc(k)}</span><span style="flex:1">${esc(L.config.local||"Sin nombre")}<br><span class="muted">${L.modulos.length} módulos</span></span>${k===store.actual?'<span class="muted">Elegido</span>':`<button class="btn small" data-l="${esc(k)}">Elegir</button>`}</div>`}).join("");
+  $("#localList").querySelectorAll("[data-l]").forEach(b=>b.onclick=()=>switchLocal(b.dataset.l));
+}
+function switchLocal(k){
+  if(!store.locales[k])return;
+  queue.forEach(q=>URL.revokeObjectURL(q.url)); queue.length=0;
+  store.actual=k; state=store.locales[k]; persist(); renderAll(); toast("Local elegido: "+k+" "+state.config.local);
+}
+$("#localSel").onchange=e=>{
+  if(e.target.value==="__new"){e.target.value=store.actual;showTab("ajustes");$("#n-sap").focus();return}
+  if(queue.length&&!confirm("Tienes fotos sin guardar. Si cambias de local se descartan. ¿Cambiar igual?")){e.target.value=store.actual;return}
+  switchLocal(e.target.value);
+};
+$("#addLocal").onclick=()=>{
+  const sap=$("#n-sap").value.trim().toUpperCase(), nom=$("#n-local").value.trim().toUpperCase(), mts=$("#n-mts").value.trim();
+  if(!sap||!nom){toast("Escribe el SAP y el nombre del local");return}
+  if(store.locales[sap]){toast("Ese SAP ya está en la lista");return}
+  store.locales[sap]=newLocal(sap,nom,mts); $("#n-sap").value=$("#n-local").value=$("#n-mts").value=""; switchLocal(sap);
+};
+$("#delLocal").onclick=()=>{
+  if(Object.keys(store.locales).length<2){toast("Debe quedar al menos un local");return}
+  if(!confirm(`¿Quitar ${store.actual} de la lista? Se borran sus ${state.modulos.length} módulos.`))return;
+  delete store.locales[store.actual]; switchLocal(Object.keys(store.locales).sort()[0]);
+};
+function nextPos(){
+  const same=state.modulos.filter(m=>m.tipo===state.ubic.tipo&&m.id===state.ubic.id&&m.lado===state.ubic.lado);
+  return same.length?Math.max(...same.map(m=>Number(m.pos)||0))+1:1;
+}
+
+/* ---------- cola de fotos ---------- */
+function addFiles(files){
+  for(const f of files){ if(!f.type.startsWith("image/"))continue; queue.push({key:uid(),file:f,url:URL.createObjectURL(f),status:"wait"}) }
+  renumberQueue(); renderQueue();
+}
+$("#fileInput").onchange=e=>{addFiles(e.target.files);e.target.value=""};
+$("#camInput").onchange=e=>{addFiles(e.target.files);e.target.value=""};
+function renumberQueue(){
+  let p=Number(state.ubic.pos)||1;
+  for(const q of queue){ q.pos=p++ }
+  renderQueue();
+}
+function refreshQueueButtons(){
+  const pend=queue.filter(q=>q.status==="wait"||q.status==="err").length;
+  const btn=$("#analyzeAll");
+  btn.disabled=!(sample&&canImages&&pend)||analyzing;
+  btn.textContent=analyzing?"Analizando…":pend>1?`Analizar ${pend} fotos con IA`:"Analizar con IA";
+}
+function renderQueue(){
+  const el=$("#queue");
+  if(!queue.length){el.innerHTML='<p class="empty">Toma o sube la foto de un módulo completo, de frente y con todos los niveles a la vista.</p>';refreshQueueButtons();return}
+  el.innerHTML="";
+  for(const q of queue){
+    const d=document.createElement("div"); d.className="qitem";
+    const st={wait:["wait","Pendiente"],run:["run","Analizando…"],ok:["ok","Listo para revisar"],err:["err","Error"]}[q.status];
+    d.innerHTML=`<img src="${q.url}" alt="Foto del módulo ${q.pos}">
+      <div><div class="row"><strong>Posición ${q.pos}</strong><span class="status ${st[0]}">${st[1]}</span></div>
+      <div class="muted">${esc(state.ubic.tipo)} ${esc(state.ubic.id)}, lado ${esc(state.ubic.lado)}</div>
+      ${q.status==="err"?`<p class="muted">${esc(q.error)}</p>`:""}
+      <div class="body"></div>
+      <div class="row" style="margin-top:8px">
+        ${q.status==="ok"?`<button class="btn tag small" data-act="save">Guardar módulo</button>`:""}
+        ${q.status==="wait"||q.status==="err"?`<button class="btn small" data-act="manual">Llenar a mano</button>`:""}
+        ${q.status==="ok"?`<button class="btn small" data-act="again">Reanalizar</button>`:""}
+        <button class="btn small danger" data-act="drop">Quitar</button>
+      </div></div>`;
+    if(q.status==="ok"&&q.result){ d.querySelector(".body").appendChild(reviewEditor(q.result)) }
+    d.querySelectorAll("button[data-act]").forEach(b=>b.onclick=()=>queueAction(q,b.dataset.act));
+    el.appendChild(d);
+  }
+  refreshQueueButtons();
+}
+function queueAction(q,act){
+  if(act==="drop"){URL.revokeObjectURL(q.url);queue.splice(queue.indexOf(q),1);renumberQueue();return}
+  if(act==="again"){q.status="wait";q.result=null;renderQueue();analyzeAll();return}
+  if(act==="manual"){q.result=blankResult();q.status="ok";renderQueue();return}
+  if(act==="save"){
+    const r=q.result;
+    state.modulos.push({key:uid(),...r,tipo:state.ubic.tipo,id:state.ubic.id,lado:state.ubic.lado,pos:q.pos,
+      ancho:Number(r.ancho)||state.ubic.ancho,prof:Number(r.prof)||state.ubic.prof});
+    URL.revokeObjectURL(q.url); queue.splice(queue.indexOf(q),1);
+    if(!queue.length){state.ubic.pos=nextPos();$("#u-pos").value=state.ubic.pos}
+    persist(); renderAll(); toast(`Módulo ${r.categoria||""} guardado en posición ${q.pos}`);
+  }
+}
+function blankResult(){return{gerencia:"CONSUMO MASIVO",seccion:"GALLETAS Y GOLOSINAS",categoria:"",layout:"",mobiliario:"GONDOLA SECA",alto:180,ancho:state.ubic.ancho,prof:state.ubic.prof,niveles:["BANDEJA","BANDEJA","BANDEJA","BANDEJA","BANDEJA"],notas:"",confianza:""}}
+
+/* ---------- editor de revisión (diagrama de góndola) ---------- */
+function reviewEditor(r){
+  const wrap=document.createElement("div"); wrap.className="review";
+  const g=document.createElement("div");
+  const gon=document.createElement("div"); gon.className="gondola";
+  const draw=()=>{
+    gon.innerHTML="";
+    r.niveles.forEach((n,i)=>{
+      const lv=document.createElement("div"); lv.className="level"+(n==="0"?" zero":"");
+      lv.style.flexGrow = n==="PALLET"?1.6:1;
+      const opts=NIVELES.map(o=>`<option ${o===n?"selected":""}>${o}</option>`).join("");
+      lv.innerHTML=`<span class="n">N${i+1}</span><select aria-label="Nivel ${i+1}">${opts}</select>`;
+      lv.querySelector("select").onchange=e=>{r.niveles[i]=e.target.value;draw()};
+      gon.appendChild(lv);
+    });
+  };
+  draw();
+  const ga=document.createElement("div"); ga.className="gon-actions";
+  ga.innerHTML=`<button type="button" class="btn small">+ Nivel</button><button type="button" class="btn small">− Nivel</button>`;
+  ga.children[0].onclick=()=>{if(r.niveles.length<7){r.niveles.push("BANDEJA");draw()}};
+  ga.children[1].onclick=()=>{if(r.niveles.length>1){r.niveles.pop();draw()}};
+  g.append(gon,ga);
+
+  const f=document.createElement("div");
+  const secOpts=Object.keys(CATALOGO).map(s=>`<option ${s===r.seccion?"selected":""}>${esc(s)}</option>`).join("");
+  f.innerHTML=`<div class="grid">
+    <label class="f">Sección<select data-k="seccion">${secOpts}</select></label>
+    <label class="f">Categoría<select data-k="categoria"></select></label>
+    <label class="f">Categoría layout<input data-k="layout"></label>
+    <label class="f">Gerencia<input data-k="gerencia"></label>
+    <label class="f">Mobiliario<select data-k="mobiliario">${MOBILIARIO.map(m=>`<option ${m===r.mobiliario?"selected":""}>${m}</option>`).join("")}</select></label>
+    <label class="f">Alto<input data-k="alto" type="number"></label>
+    <label class="f">Ancho<input data-k="ancho" type="number"></label>
+    <label class="f">Profundidad<input data-k="prof" type="number"></label>
+  </div>
+  ${r.notas?`<div class="notes">${r.confianza?`<strong>Confianza ${esc(r.confianza)}.</strong> `:""}${esc(r.notas)}</div>`:""}`;
+  const catSel=f.querySelector('[data-k="categoria"]');
+  const fillCats=()=>{
+    const cats=CATALOGO[r.seccion]?.c||[];
+    const list=cats.includes(r.categoria)||!r.categoria?cats:[r.categoria,...cats];
+    catSel.innerHTML=`<option value="">Elegir…</option>`+list.map(c=>`<option ${c===r.categoria?"selected":""}>${esc(c)}</option>`).join("");
+  };
+  fillCats();
+  f.querySelectorAll("[data-k]").forEach(el=>{
+    const k=el.dataset.k; if(el.tagName==="INPUT")el.value=r[k]??"";
+    el.onchange=()=>{
+      r[k]=el.type==="number"?Number(el.value):el.value;
+      if(k==="seccion"){r.gerencia=CATALOGO[r.seccion]?.g||r.gerencia;f.querySelector('[data-k="gerencia"]').value=r.gerencia;r.categoria="";r.layout="";fillCats();f.querySelector('[data-k="layout"]').value=""}
+      if(k==="categoria"){r.layout=LAYOUT_ESPECIAL[r.categoria]||r.categoria;f.querySelector('[data-k="layout"]').value=r.layout}
+    };
+  });
+  wrap.append(g,f);
+  return wrap;
+}
+
+/* ---------- modo independiente (GitHub Pages u otro hosting) ---------- */
+const MODEL="claude-sonnet-5-5";
+function getKey(){try{return localStorage.getItem("mam-api-key")||""}catch(e){return""}}
+function setupApiMode(){
+  const k=getKey(); $("#apiKey").value=k?"••••••••":"";
+  canImages=!!k;
+  sample=k?{json:apiJson}:null;
+  $("#aiState").textContent=k?"Listo. Sube fotos y presiona Analizar con IA.":"Para analizar con IA, guarda tu clave API en la pestaña Local. Igual puedes cargar módulos a mano.";
+  refreshQueueButtons();
+}
+$("#saveKey").onclick=()=>{const v=$("#apiKey").value.trim();if(!v.startsWith("sk-")){toast("La clave debe empezar con sk-");return}try{localStorage.setItem("mam-api-key",v)}catch(e){}setupApiMode();toast("Clave guardada en este navegador")};
+$("#delKey").onclick=()=>{try{localStorage.removeItem("mam-api-key")}catch(e){}$("#apiKey").value="";setupApiMode();toast("Clave borrada")};
+function shrink(file,max=1568){
+  return new Promise((res,rej)=>{
+    const img=new Image(); img.onload=()=>{
+      const sc=Math.min(1,max/Math.max(img.width,img.height));
+      const c=document.createElement("canvas"); c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+      c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+      res(c.toDataURL("image/jpeg",0.85).split(",")[1]);
+    }; img.onerror=rej; img.src=URL.createObjectURL(file);
+  });
+}
+async function apiJson(prompt,{images}){
+  const data=await shrink(images[0]);
+  let r;
+  try{
+    r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"content-type":"application/json","x-api-key":getKey(),"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({model:MODEL,max_tokens:1500,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:"image/jpeg",data}},{type:"text",text:prompt}]}]})});
+  }catch(e){throw{code:"network"}}
+  if(r.status===401)throw{code:"bad_key"};
+  if(r.status===429)throw{code:"rate_limited"};
+  if(!r.ok)throw{code:"api_error"};
+  const j=await r.json();
+  const text=(j.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").replace(/```json|```/g,"").trim();
+  const m=text.match(/\{[\s\S]*\}/); if(!m)throw{code:"parse"};
+  return JSON.parse(m[0]);
+}
+
+/* ---------- análisis con IA ---------- */
+let analyzing=false;
+const catalogText=Object.entries(CATALOGO).filter(([s])=>s!=="-").map(([s,v])=>`${s} (gerencia ${v.g}): ${v.c.join(", ")}`).join("\n");
+function buildPrompt(){
+  return `Eres un analista de espacio de supermercados Santa Isabel (Chile) haciendo un levantamiento "metro a metro" de la sala de ventas.
+La imagen es UNA foto de un módulo de exhibición (normalmente una góndola de ~130 cm de ancho). Analiza SOLO el módulo central completo que está de frente; ignora los módulos vecinos que se ven cortados en los bordes.
+
+Debes devolver:
+1. Sección y categoría según el surtido que predomina. Usa EXACTAMENTE estos nombres (sección: categorías):
+${catalogText}
+Si el módulo mezcla categorías, elige la que ocupa más niveles y menciona la otra en "notas".
+2. Tipo de mobiliario, uno de: ${MOBILIARIO.join(", ")}. Una góndola con repisas es GONDOLA SECA. Una vitrina con puerta de vidrio refrigerada es PUERTA REFRIGERADA 1P (o 2P si son dos hojas).
+3. Niveles contados DE ABAJO HACIA ARRIBA: el nivel 1 es la repisa más baja (base del mueble) y el último es la repisa superior (incluye la carga sobre el techo de la góndola solo si es una repisa con baranda). Tipo de cada nivel, uno de: ${NIVELES.filter(n=>n!=="0").join(", ")}. BANDEJA = repisa (con o sin baranda de alambre). GANCHERA = fila de ganchos/colgadores donde los productos cuelgan. PALLET = producto sobre pallet en la base. Cuenta cada fila de ganchos como un nivel. Máximo 7 niveles.
+4. Alto estimado del módulo en cm (valores típicos 150, 180 o 200). Ancho en cm (130 normal, 65 si es medio módulo, 60 por puerta refrigerada).
+5. Qué productos/marcas se ven cortados en el borde izquierdo y derecho de la foto (sirve para ordenar módulos contiguos).
+
+Responde SOLO con JSON válido, sin texto adicional, con esta forma:
+{"seccion":"...","categoria":"...","mobiliario":"...","alto":180,"ancho":130,"niveles":["BANDEJA","..."],"confianza":"alta|media|baja","notas":"una o dos frases en español: qué productos viste, dudas o mezcla de categorías","borde_izquierdo":"...","borde_derecho":"..."}`;
+}
+function normalize(j){
+  let sec=String(j.seccion||"").toUpperCase().trim();
+  if(!CATALOGO[sec]){const k=Object.keys(CATALOGO).find(s=>s.replace(/[^A-Z]/g,"")===sec.replace(/[^A-Z]/g,""));sec=k||sec}
+  let cat=String(j.categoria||"").toUpperCase().trim();
+  let mob=String(j.mobiliario||"GONDOLA SECA").toUpperCase().trim(); if(!MOBILIARIO.includes(mob))mob="GONDOLA SECA";
+  let niv=(Array.isArray(j.niveles)?j.niveles:[]).map(n=>{n=String(n).toUpperCase().trim();if(n==="GANCHERAS")n="GANCHERA";return NIVELES.includes(n)?n:"BANDEJA"}).slice(0,7);
+  if(!niv.length)niv=["BANDEJA"];
+  let notas=String(j.notas||"");
+  if(j.borde_izquierdo||j.borde_derecho)notas+=` Borde izq.: ${j.borde_izquierdo||"—"}. Borde der.: ${j.borde_derecho||"—"}.`;
+  return{gerencia:CATALOGO[sec]?.g||"CONSUMO MASIVO",seccion:sec,categoria:cat,layout:LAYOUT_ESPECIAL[cat]||cat,mobiliario:mob,
+    alto:Number(j.alto)||180,ancho:Number(j.ancho)||state.ubic.ancho,prof:mob.startsWith("PUERTA")?80:state.ubic.prof,niveles:niv,
+    confianza:String(j.confianza||""),notas:notas.trim()};
+}
+async function analyzeAll(){
+  if(analyzing||!sample)return;
+  analyzing=true; refreshQueueButtons();
+  for(const q of queue){
+    if(q.status!=="wait"&&q.status!=="err")continue;
+    q.status="run"; renderQueue();
+    try{
+      const j=await sample.json(buildPrompt(),{images:[q.file],modelTier:"default"});
+      q.result=normalize(j||{}); q.status="ok";
+    }catch(e){
+      q.status="err";
+      q.error={not_granted:"No diste permiso para usar Claude. Puedes llenar el módulo a mano.",rate_limited:"Demasiadas solicitudes seguidas. Espera un minuto y vuelve a analizar.",images_unavailable:"Esta vista no permite enviar fotos.",bad_key:"La clave API no es válida. Revísala en la pestaña Local.",network:"Sin conexión. Revisa tu internet y vuelve a analizar."}[e?.code]||"No se pudo leer la respuesta. Vuelve a analizar o llénalo a mano.";
+      renderQueue();
+      if(["not_granted","rate_limited","bad_key","network"].includes(e?.code))break;
+    }
+    renderQueue();
+  }
+  analyzing=false; refreshQueueButtons();
+}
+$("#analyzeAll").onclick=analyzeAll;
+
+/* ---------- lista de módulos ---------- */
+function groupKey(m){return `${m.tipo}|${m.id}|${m.lado}`}
+function renderList(){
+  $("#count").textContent=`(${state.modulos.length})`;
+  const el=$("#list");
+  if(!state.modulos.length){el.innerHTML='<p class="empty">Aún no hay módulos guardados. Empieza en la pestaña Capturar.</p>';return}
+  const groups={};
+  for(const m of state.modulos)(groups[groupKey(m)]??=[]).push(m);
+  el.innerHTML="";
+  for(const [k,ms] of Object.entries(groups).sort((a,b)=>a[0].localeCompare(b[0],"es",{numeric:true}))){
+    ms.sort((a,b)=>a.pos-b.pos);
+    const [tipo,id,lado]=k.split("|");
+    const g=document.createElement("div"); g.className="group";
+    g.innerHTML=`<div class="row"><h3>${esc(tipo)} ${esc(id)}, lado ${esc(lado)}</h3><span class="muted">${ms.length} módulos, ${ms.reduce((s,m)=>s+(Number(m.ancho)||0),0)/100} m</span>
+      <button class="btn small" data-rev style="margin-left:auto">Invertir orden</button></div>`;
+    g.querySelector("[data-rev]").onclick=()=>{const n=ms.length;ms.forEach(m=>m.pos=n+1-m.pos);persist();renderList();toast("Orden invertido")};
+    ms.forEach((m,i)=>{
+      const r=document.createElement("div"); r.className="mrow";
+      r.innerHTML=`<div class="pos">${m.pos}</div>
+        <div><div class="t">${esc(m.categoria||"Sin categoría")}</div>
+        <div class="s">${esc(m.seccion)}, ${esc(m.mobiliario)} ${m.alto}×${m.ancho}×${m.prof}</div>
+        <div class="s">${m.niveles.length} niveles: ${esc(m.niveles.join(", "))}</div></div>
+        <div class="acts">
+          <button class="btn small" data-a="up" aria-label="Subir" ${i===0?"disabled":""}>▲</button>
+          <button class="btn small" data-a="down" aria-label="Bajar" ${i===ms.length-1?"disabled":""}>▼</button>
+          <button class="btn small" data-a="edit">Editar</button>
+          <button class="btn small danger" data-a="del">Eliminar</button>
+        </div>`;
+      r.querySelectorAll("[data-a]").forEach(b=>b.onclick=()=>{
+        const a=b.dataset.a;
+        if(a==="up"||a==="down"){const o=ms[i+(a==="up"?-1:1)];[m.pos,o.pos]=[o.pos,m.pos];persist();renderList()}
+        if(a==="del"){if(confirm(`¿Eliminar el módulo ${m.pos} (${m.categoria})?`)){state.modulos.splice(state.modulos.indexOf(m),1);ms.splice(i,1);ms.forEach((x,j)=>x.pos=j+1);persist();renderList()}}
+        if(a==="edit")openEdit(m);
+      });
+      g.appendChild(r);
+    });
+    el.appendChild(g);
+  }
+}
+function openEdit(m,isNew){
+  const dlg=$("#editDlg"), form=$("#editForm");
+  const draft=JSON.parse(JSON.stringify(m));
+  form.innerHTML=`<h2 style="margin:0 0 10px;font-stretch:85%">${isNew?"Nuevo módulo":"Editar módulo "+m.pos}</h2>
+    <div class="grid" style="margin-bottom:10px">
+      <label class="f">Tipo ubicación<input data-u="tipo" value="${esc(draft.tipo)}"></label>
+      <label class="f">ID<input data-u="id" value="${esc(draft.id)}"></label>
+      <label class="f">Lado<input data-u="lado" value="${esc(draft.lado)}"></label>
+      <label class="f">Posición<input data-u="pos" type="number" value="${draft.pos}"></label>
+    </div><div id="edBody"></div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end">
+      <button class="btn" value="cancel">Cancelar</button><button class="btn primary" value="ok">Guardar cambios</button></div>`;
+  form.querySelector("#edBody").appendChild(reviewEditor(draft));
+  form.querySelectorAll("[data-u]").forEach(el=>el.onchange=()=>{const k=el.dataset.u;draft[k]=k==="pos"?Number(el.value):el.value.trim().toUpperCase()});
+  dlg.onclose=()=>{
+    if(dlg.returnValue!=="ok")return;
+    if(isNew)state.modulos.push(draft); else Object.assign(m,draft);
+    persist(); renderList(); toast(isNew?"Módulo agregado":"Cambios guardados");
+  };
+  dlg.showModal();
+}
+$("#addManual").onclick=()=>openEdit({key:uid(),...blankResult(),tipo:state.ubic.tipo,id:state.ubic.id,lado:state.ubic.lado,pos:nextPos()},true);
+$("#wipe").onclick=()=>{if(confirm("¿Borrar todos los módulos del levantamiento?")){state.modulos=[];state.ubic.pos=1;$("#u-pos").value=1;persist();renderAll();toast("Levantamiento borrado")}};
+
+/* ---------- exportar ---------- */
+$("#exportBtn").onclick=async()=>{
+  if(!state.modulos.length){toast("No hay módulos para exportar");return}
+  if(!window.XLSX){toast("No se pudo cargar el generador de Excel");return}
+  const c=state.config;
+  const rows=[...state.modulos].sort((a,b)=>groupKey(a).localeCompare(groupKey(b),"es",{numeric:true})||a.pos-b.pos).map(m=>{
+    const n=[...m.niveles];while(n.length<7)n.push(0);
+    return[c.sap,c.local,c.mts2===""?null:Number(c.mts2),m.gerencia,m.seccion,m.categoria,m.layout||m.categoria,m.mobiliario,
+      Number(m.alto),Number(m.ancho),Number(m.prof),m.tipo,m.id,m.lado,Number(m.pos),...n.slice(0,7).map(x=>x==="0"?0:x)];
+  });
+  const ws=XLSX.utils.aoa_to_sheet([HEADERS,...rows]);
+  ws["!cols"]=HEADERS.map(h=>({wch:Math.max(10,h.length+2)}));
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,("MAM"+c.sap).slice(0,31));
+  const buf=XLSX.write(wb,{bookType:"xlsx",type:"array"});
+  const filename=`LEVANTAMIENTO_MAM_${c.sap}.xlsx`;
+  if(downloads){
+    try{const r=await downloads.save({filename,data:new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"})});if(r.status==="saved")toast("Excel descargado")}
+    catch(e){toast("La descarga no se completó")}
+  }else{
+    const url=URL.createObjectURL(new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+    const a=document.createElement("a");a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),4000); toast("Excel descargado");
+  }
+};
+
+function renderAll(){bindUbic();renderQueue();renderList()}
+loadLocal(); renderAll(); initRuntime();
+</script>
+</body>
+</html>
