@@ -218,6 +218,24 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 
 <!-- AJUSTES -->
 <section class="view" id="v-ajustes" hidden>
+  <div class="panel" id="srvPanel">
+    <h2>Trabajo en equipo</h2>
+    <p class="muted" style="margin-top:0">Conecta la app al servidor del equipo para que todos vean y editen el mismo levantamiento. El análisis con IA queda incluido, sin clave API.</p>
+    <div class="grid">
+      <label class="f">Dirección del servidor<input id="s-url" placeholder="https://levantamiento-mam.xxxx.workers.dev" inputmode="url" autocomplete="off"></label>
+      <label class="f">PIN del equipo<input id="s-pin" type="password" autocomplete="off"></label>
+      <label class="f">Tu nombre<input id="s-user" placeholder="Ej: Patricio N." autocomplete="name"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" id="s-connect">Conectar</button>
+      <button class="btn" id="s-off">Desconectar</button>
+      <span class="muted" id="s-state"></span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="btn small" for="s-import">Importar datos (JSON)</label>
+      <input class="hidden-input" id="s-import" type="file" accept=".json,application/json">
+    </div>
+  </div>
   <div class="panel">
     <h2>Elegir local</h2>
     <div id="localList"></div>
@@ -347,6 +365,7 @@ function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&l
 function loadLocal(){try{const s=localStorage.getItem("mam-levantamiento");if(s)adopt(JSON.parse(s))}catch(e){}}
 function persist(){
   try{localStorage.setItem("mam-levantamiento",JSON.stringify(store))}catch(e){}
+  if(online){clearTimeout(pushTimer);pushTimer=setTimeout(pushChanges,600)}
   if(!docRef)return;
   clearTimeout(saveTimer);
   $("#sync").textContent="Guardando…";
@@ -356,7 +375,8 @@ function persist(){
   },700);
 }
 async function initRuntime(){
-  if(!window.claude){setupApiMode();return}
+  $("#srvPanel").hidden=!!window.claude;
+  if(!window.claude){bindServer();setupApiMode();connect();return}
   $("#apiPanel").hidden=true;
   claude.use("sample").then(async s=>{
     sample=s;
@@ -400,6 +420,7 @@ function bindUbic(){
     const el=$(sel); el.value=state.config[k]??"";
     el.onchange=()=>{
       const v=k==="mts2"?el.value.trim():el.value.trim().toUpperCase();
+      if(k==="sap"&&online){toast("Con el equipo conectado no se puede cambiar el SAP");el.value=state.config.sap;return}
       if(k==="sap"){if(!v||(v!==store.actual&&store.locales[v])){toast("Ese SAP ya existe o está vacío");el.value=state.config.sap;return}
         delete store.locales[store.actual];store.locales[v]=state;store.actual=v}
       state.config[k]=v; persist(); renderLocales()};
@@ -416,6 +437,7 @@ function switchLocal(k){
   if(!store.locales[k])return;
   queue.forEach(q=>URL.revokeObjectURL(q.url)); queue.length=0;
   store.actual=k; state=store.locales[k]; persist(); renderAll(); toast("Local elegido: "+k+" "+state.config.local);
+  if(online)pullModulos(true).catch(setSync);
 }
 $("#localSel").onchange=e=>{
   if(e.target.value==="__new"){e.target.value=store.actual;showTab("ajustes");$("#n-sap").focus();return}
@@ -426,12 +448,13 @@ $("#addLocal").onclick=()=>{
   const sap=$("#n-sap").value.trim().toUpperCase(), nom=$("#n-local").value.trim().toUpperCase(), mts=$("#n-mts").value.trim();
   if(!sap||!nom){toast("Escribe el SAP y el nombre del local");return}
   if(store.locales[sap]){toast("Ese SAP ya está en la lista");return}
-  store.locales[sap]=newLocal(sap,nom,mts); $("#n-sap").value=$("#n-local").value=$("#n-mts").value=""; switchLocal(sap);
+  store.locales[sap]=newLocal(sap,nom,mts); if(online)synced[sap]={}; $("#n-sap").value=$("#n-local").value=$("#n-mts").value=""; switchLocal(sap);
 };
 $("#delLocal").onclick=()=>{
   if(Object.keys(store.locales).length<2){toast("Debe quedar al menos un local");return}
   if(!confirm(`¿Quitar ${store.actual} de la lista? Se borran sus ${state.modulos.length} módulos.`))return;
-  delete store.locales[store.actual]; switchLocal(Object.keys(store.locales).sort()[0]);
+  const gone=store.actual; if(online)api("/api/locales/"+encodeURIComponent(gone),{method:"DELETE"}).catch(setSync);
+  delete store.locales[gone]; delete synced[gone]; delete cfgSynced[gone]; switchLocal(Object.keys(store.locales).sort()[0]);
 };
 function nextPos(){
   const same=state.modulos.filter(m=>m.tipo===state.ubic.tipo&&m.id===state.ubic.id&&m.lado===state.ubic.lado);
@@ -555,10 +578,138 @@ function reviewEditor(r){
   return wrap;
 }
 
+/* ---------- trabajo en equipo: servidor compartido (Cloudflare Worker) ---------- */
+const SRV={url:"",pin:"",user:""};
+try{Object.assign(SRV,JSON.parse(localStorage.getItem("mam-srv")||"{}"))}catch(e){}
+let online=false, srvIA=false, pushTimer=null, pollTimer=null, pushing=false, pushAgain=false, pollN=0;
+let synced={}, cfgSynced={}, lastTs={};
+try{const x=JSON.parse(localStorage.getItem("mam-synced")||"{}");synced=x.synced||{};cfgSynced=x.cfg||{}}catch(e){}
+function saveSynced(){try{localStorage.setItem("mam-synced",JSON.stringify({synced,cfg:cfgSynced}))}catch(e){}}
+function strip(m){const {updated_by,...r}=m;return r}
+function sig(m){return JSON.stringify(strip(m))}
+async function api(path,opt={}){
+  const r=await fetch(SRV.url.replace(/\/+$/,"")+path,{...opt,headers:{"Content-Type":"application/json","X-Team-Pin":SRV.pin,"X-User":SRV.user||"",...(opt.headers||{})}});
+  if(r.status===401)throw{code:"pin"};
+  if(r.status===429)throw{code:"rate_limited"};
+  if(!r.ok)throw{code:"http",status:r.status};
+  return r.json();
+}
+function pendingCount(){let n=0;for(const sap in synced){const L=store.locales[sap];if(!L)continue;const syn=synced[sap];n+=L.modulos.filter(m=>syn[m.key]!==sig(m)).length;const cur=new Set(L.modulos.map(m=>m.key));n+=Object.keys(syn).filter(k=>!cur.has(k)).length}return n}
+function setSync(err){
+  const el=$("#sync"), st=$("#s-state");
+  let t;
+  if(err&&err.code==="pin"){online=false;t="PIN incorrecto"}
+  else if(err){t="Sin conexión con el equipo, guardado en este equipo"}
+  else if(online){const n=pendingCount();t=n?`Enviando ${n} cambios…`:"Sincronizado con el equipo"}
+  else t=SRV.url?"Sin conexión con el equipo":"Guardado en este equipo";
+  el.textContent=t; if(st)st.textContent=t;
+}
+async function connect(){
+  clearInterval(pollTimer); online=false;
+  if(!SRV.url||!SRV.pin){setSync();setupApiMode();return}
+  $("#sync").textContent="Conectando…";
+  try{
+    const p=await api("/api/ping"); online=true; srvIA=!!p.ia;
+    await pullLocales(); await pullModulos(true); await pushChanges();
+    pollTimer=setInterval(poll,15000); setSync();
+  }catch(e){setSync(e)}
+  setupApiMode();
+}
+async function poll(){
+  if(!online||document.hidden)return;
+  try{ if(++pollN%4===0)await pullLocales(); await pullModulos(false); await pushChanges() }catch(e){setSync(e)}
+}
+async function pullLocales(){
+  const ls=await api("/api/locales");
+  for(const l of ls){
+    const L=store.locales[l.sap]??=newLocal(l.sap,l.local,l.mts2);
+    L.config.local=l.local; L.config.mts2=l.mts2;
+    cfgSynced[l.sap]=JSON.stringify({local:l.local,mts2:String(l.mts2??"")});
+  }
+  saveSynced(); renderLocales();
+}
+async function pullModulos(full){
+  const sap=store.actual, L=store.locales[sap]; if(!L)return;
+  const r=await api(`/api/modulos?sap=${encodeURIComponent(sap)}&since=${full?0:(lastTs[sap]||0)}`);
+  const syn=synced[sap]??={}; const byKey=new Map(L.modulos.map(m=>[m.key,m])); let changed=0;
+  for(const x of r.modulos){
+    const loc=byKey.get(x.key);
+    const dirty=loc&&syn[x.key]!==undefined&&sig(loc)!==syn[x.key];
+    if(dirty)continue; // tu cambio pendiente gana, se envía después
+    if(x.deleted){ if(loc){byKey.delete(x.key);changed++} delete syn[x.key]; continue }
+    const d={...x.data,updated_by:x.updated_by};
+    if(!loc||sig(loc)!==sig(d)||loc.updated_by!==d.updated_by){byKey.set(x.key,d);changed++}
+    syn[x.key]=sig(d);
+  }
+  lastTs[sap]=r.ts;
+  if(changed){L.modulos=[...byKey.values()]; if(store.actual===sap)state=L;
+    try{localStorage.setItem("mam-levantamiento",JSON.stringify(store))}catch(e){}
+    if(!$("#editDlg").open){renderList()} }
+  saveSynced(); setSync();
+}
+async function pushChanges(){
+  if(!online)return; if(pushing){pushAgain=true;return} pushing=true;
+  try{
+    for(const sap of Object.keys(store.locales)){
+      const L=store.locales[sap];
+      const cs=JSON.stringify({local:L.config.local,mts2:String(L.config.mts2??"")});
+      if(cfgSynced[sap]!==cs){await api("/api/locales/"+encodeURIComponent(sap),{method:"PUT",body:cs});cfgSynced[sap]=cs}
+      const syn=synced[sap]; if(!syn)continue;
+      const ch=L.modulos.filter(m=>syn[m.key]!==sig(m));
+      for(let i=0;i<ch.length;i+=100){
+        const part=ch.slice(i,i+100);
+        await api("/api/modulos",{method:"PUT",body:JSON.stringify({sap,modulos:part.map(strip)})});
+        part.forEach(m=>{syn[m.key]=sig(m);m.updated_by=SRV.user||m.updated_by});
+      }
+      const cur=new Set(L.modulos.map(m=>m.key)); const del=Object.keys(syn).filter(k=>!cur.has(k));
+      for(let i=0;i<del.length;i+=200){const part=del.slice(i,i+200);await api("/api/modulos/borrar",{method:"POST",body:JSON.stringify({keys:part})});part.forEach(k=>delete syn[k])}
+    }
+    saveSynced(); setSync();
+  }catch(e){setSync(e)}
+  finally{pushing=false; if(pushAgain){pushAgain=false; pushChanges()}}
+}
+async function srvJson(prompt,{images}){
+  const image=await shrink(images[0]);
+  let r; try{r=await api("/api/analizar",{method:"POST",body:JSON.stringify({prompt,image})})}catch(e){throw e.code==="http"?{code:"api_error"}:e}
+  const text=String(r.text||"").replace(/```json|```/g,"").trim();
+  const m=text.match(/\{[\s\S]*\}/); if(!m)throw{code:"parse"};
+  return JSON.parse(m[0]);
+}
+function bindServer(){
+  $("#s-url").value=SRV.url; $("#s-pin").value=SRV.pin?"••••":""; $("#s-user").value=SRV.user;
+  $("#s-connect").onclick=()=>{
+    const url=$("#s-url").value.trim(), pin=$("#s-pin").value.trim(), user=$("#s-user").value.trim();
+    if(!/^https:\/\//.test(url)){toast("La dirección debe empezar con https://");return}
+    if(!user){toast("Escribe tu nombre para que el equipo sepa quién subió cada módulo");return}
+    SRV.url=url; if(pin&&pin!=="••••")SRV.pin=pin; SRV.user=user;
+    try{localStorage.setItem("mam-srv",JSON.stringify(SRV))}catch(e){}
+    connect().then(()=>{ if(online)toast("Conectado al servidor del equipo") });
+  };
+  $("#s-off").onclick=()=>{SRV.pin="";try{localStorage.setItem("mam-srv",JSON.stringify(SRV))}catch(e){}$("#s-pin").value="";connect();toast("Desconectado del servidor")};
+  $("#s-import").onchange=async e=>{
+    const f=e.target.files[0]; e.target.value=""; if(!f)return;
+    try{
+      const d=JSON.parse(await f.text()); const ls=d.locales||{}; let n=0;
+      for(const [sap,src] of Object.entries(ls)){
+        const L=store.locales[sap]??=newLocal(sap,src.config?.local||"",src.config?.mts2||"");
+        if(src.config){L.config.local=src.config.local||L.config.local;L.config.mts2=src.config.mts2??L.config.mts2}
+        const have=new Set(L.modulos.map(m=>m.key));
+        for(const m of src.modulos||[]){if(m&&m.key&&!have.has(m.key)){L.modulos.push(m);n++}}
+        if(online)synced[sap]??={};
+      }
+      state=store.locales[store.actual]; persist(); renderAll();
+      toast(`Importados ${n} módulos${online?", enviando al equipo…":""}`);
+    }catch(err){toast("El archivo no es un respaldo válido")}
+  };
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden)poll()});
+}
+
 /* ---------- modo independiente (GitHub Pages u otro hosting) ---------- */
 const MODEL="claude-sonnet-5-5";
 function getKey(){try{return localStorage.getItem("mam-api-key")||""}catch(e){return""}}
 function setupApiMode(){
+  $("#apiPanel").hidden=online&&srvIA;
+  if(online&&srvIA){canImages=true;sample={json:srvJson};$("#aiState").textContent="Listo. Sube fotos y presiona Analizar con IA.";refreshQueueButtons();return}
   const k=getKey(); $("#apiKey").value=k?"••••••••":"";
   canImages=!!k;
   sample=k?{json:apiJson}:null;
@@ -672,7 +823,7 @@ function renderList(){
       r.innerHTML=`<div class="pos">${m.pos}</div>
         <div><div class="t">${esc(m.categoria||"Sin categoría")}${m.origen==="PLANO"?'<span class="badge">Plano, por verificar</span>':""}</div>
         <div class="s">${esc(m.seccion)}, ${esc(m.mobiliario)} ${m.alto}×${m.ancho}×${m.prof}</div>
-        <div class="s">${m.niveles.length?`${m.niveles.length} niveles: ${esc(m.niveles.join(", "))}`:"Niveles por verificar"}</div></div>
+        <div class="s">${m.niveles.length?`${m.niveles.length} niveles: ${esc(m.niveles.join(", "))}`:"Niveles por verificar"}${m.updated_by&&m.origen!=="PLANO"?`, por ${esc(m.updated_by)}`:""}</div></div>
         <div class="acts">
           <button class="btn small" data-a="up" aria-label="Subir" ${i===0?"disabled":""}>▲</button>
           <button class="btn small" data-a="down" aria-label="Bajar" ${i===ms.length-1?"disabled":""}>▼</button>
