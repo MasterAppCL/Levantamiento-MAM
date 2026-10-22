@@ -960,7 +960,7 @@ $("#exportBtn").onclick=async()=>{
 document.getElementById("dl-layouts").innerHTML=LAYOUTS.map(l=>`<option value="${l[0]}">${l[1]} / ${l[2]}</option>`).join("");
 function renderAll(){bindUbic();renderQueue();renderList();renderPlano()}
 loadLocal(); renderAll(); initRuntime();
-if("serviceWorker" in navigator && location.protocol==="https:"){navigator.serviceWorker.register("sw.js").catch(()=>{})}
+if("serviceWorker" in navigator && location.protocol==="https:"){navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});navigator.serviceWorker.addEventListener("controllerchange",()=>{if(!window.__swReloaded){window.__swReloaded=true;location.reload()}})}
 </script>
 </body>
 </html>

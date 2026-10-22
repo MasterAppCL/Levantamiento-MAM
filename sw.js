@@ -1,4 +1,4 @@
-const CACHE = "mam-v6";
+const CACHE = "mam-v7";
 const SHELL = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png",
   "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"];
 self.addEventListener("install", e => {
@@ -12,7 +12,7 @@ self.addEventListener("fetch", e => {
   if (req.method !== "GET" || req.url.includes("api.anthropic.com")) return;
   // HTML: red primero (para recibir actualizaciones), caché si no hay señal
   if (req.mode === "navigate") {
-    e.respondWith(fetch(req).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put("./index.html", c)); return r; })
+    e.respondWith(fetch(req, { cache: "no-store" }).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put("./index.html", c)); return r; })
       .catch(() => caches.match("./index.html")));
     return;
   }
